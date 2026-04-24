@@ -1,0 +1,139 @@
+// api/triagem.js - Deploy no Vercel
+
+export default async function handler(req, res) {
+    // Apenas POST
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Método não permitido' });
+    }
+
+    const { nomeCliente, conversa, tipoTriagem } = req.body;
+
+    // Validações
+    if (!nomeCliente || !conversa || !tipoTriagem) {
+        return res.status(400).json({ message: 'Dados incompletos' });
+    }
+
+    // Obter chave da API Claude das variáveis de ambiente
+    const apiKey = process.env.CLAUDE_API_KEY;
+    if (!apiKey) {
+        console.error('CLAUDE_API_KEY não configurada');
+        return res.status(500).json({ message: 'Erro de configuração do servidor' });
+    }
+
+    try {
+        // Montar o prompt baseado no tipo de triagem
+        let prompt = '';
+
+        if (tipoTriagem === 'completa') {
+            prompt = `Você é um especialista em agência de viagens. Analise esta conversa entre uma consultora de viagens e um cliente que pretende viajar para Orlando.
+
+IMPORTANTE: Extraia com precisão TODAS as informações mencionadas na conversa.
+
+Retorne EXATAMENTE neste formato (use "Não mencionado" apenas se realmente não encontrar a informação):
+
+TRIAGEM ORLANDO / INGRESSOS
+
+PRIMEIRA VEZ: [SIM/NÃO/Não mencionado]
+MOTIVO: [motivo da viagem]
+DEMAIS ITENS: [itens extras mencionados]
+
+DATA: [data início a data fim - duração em dias]
+
+QUANTIDADE: [número total de pessoas com detalhamento: X adultos, X crianças de Y e Z anos]
+
+PASSAGEM AÉREA:
+saindo de: [cidade/aeroporto de origem]
+
+HOSPEDAGEM:
+[período, localização, padrão, hotel específico mencionado, detalhes]
+
+INGRESSOS:
+[listar parques com data se mencionada, quantidade de pessoas, eventos especiais como Halloween, Natal, etc]
+
+LOCAÇÃO DE CARRO: [informações ou status]
+
+SEGURO VIAGEM: [informações ou status]
+
+OBSERVAÇÕES:
+[notas importantes, próximos passos, dúvidas do cliente, preferências especiais]
+
+---
+
+CONVERSA:
+${conversa}`;
+        } else {
+            prompt = `Você é um especialista em agência de viagens. Analise esta conversa entre uma consultora de viagens e um cliente que precisa apenas de cotação de ingressos para Orlando.
+
+IMPORTANTE: Extraia com precisão TODAS as informações mencionadas.
+
+Retorne EXATAMENTE neste formato:
+
+TRIAGEM INGRESSOS
+PRIMEIRA VEZ: [SIM/NÃO/Não mencionado]
+MOTIVO: [motivo da viagem]
+DEMAIS ITENS: [itens extras mencionados]
+DATA: [data início a data fim - duração em dias]
+QUANTIDADE: [número total com detalhamento: X adultos, X crianças de Y e Z anos]
+INGRESSOS:
+[listar parques por data com quantidade de pessoas e eventos especiais]
+
+OBSERVAÇÕES:
+[notas importantes, próximos passos]
+
+---
+
+CONVERSA:
+${conversa}`;
+        }
+
+        // Chamar Claude API
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+                model: 'claude-3-5-sonnet-20241022',
+                max_tokens: 2000,
+                messages: [
+                    { role: 'user', content: prompt }
+                ]
+            })
+        });
+
+        if (!response.ok) {
+            const erro = await response.json();
+            console.error('Erro Claude API:', erro);
+            
+            if (response.status === 401) {
+                return res.status(401).json({ message: 'Erro de autenticação com API Claude' });
+            }
+            
+            return res.status(response.status).json({ 
+                message: erro.error?.message || 'Erro ao processar triagem' 
+            });
+        }
+
+        const data = await response.json();
+        const triagem = data.content[0]?.text || '';
+
+        if (!triagem) {
+            return res.status(500).json({ message: 'Resposta vazia da IA' });
+        }
+
+        return res.status(200).json({
+            triagem: triagem.trim(),
+            cliente: nomeCliente,
+            tipo: tipoTriagem,
+            data: new Date().toISOString()
+        });
+
+    } catch (erro) {
+        console.error('Erro no backend:', erro);
+        return res.status(500).json({ 
+            message: 'Erro ao processar: ' + erro.message 
+        });
+    }
+}
